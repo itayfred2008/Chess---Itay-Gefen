@@ -12,6 +12,8 @@ class ChessGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Chess MVP")
+        self.promo_window = None
+        self.hover_square = None  # e.g. "e4"
 
         self.game = Game()
 
@@ -30,7 +32,26 @@ class ChessGUI:
         self.turn_var = tk.StringVar()
         tk.Label(controls, textvariable=self.turn_var).pack(side="left", padx=10)
 
-        self.canvas = tk.Canvas(root, width=canvas_size, height=canvas_size)
+        # Middle area: board (left) + move list (right)
+        middle = tk.Frame(root)
+        middle.pack()
+
+        left = tk.Frame(middle)
+        left.pack(side="left")
+
+        right = tk.Frame(middle)
+        right.pack(side="left", padx=10, fill="y")
+
+        tk.Label(right, text="Moves").pack(anchor="w")
+
+        self.moves_listbox = tk.Listbox(right, width=22, height=24)
+        self.moves_listbox.pack(side="left", fill="y")
+
+        scroll = tk.Scrollbar(right, command=self.moves_listbox.yview)
+        scroll.pack(side="left", fill="y")
+        self.moves_listbox.config(yscrollcommand=scroll.set)
+
+        self.canvas = tk.Canvas(left, width=canvas_size, height=canvas_size)
         self.canvas.pack()
 
         self.status_var = tk.StringVar()
@@ -40,7 +61,12 @@ class ChessGUI:
         self.selected = None
         self.legal_squares = set()
 
-        self.canvas.bind("<Button-1>", self.on_click)
+        self.canvas.tag_bind("board", "<Button-1>", self.on_click)
+        self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        self.canvas.bind("<Motion>", self.on_mouse_move)
+        self.canvas.bind("<Leave>", self.on_mouse_leave)
+
         self.redraw()
         self.refresh_status()
 
@@ -48,6 +74,7 @@ class ChessGUI:
         self.game.reset()
         self.selected = None
         self.legal_squares = set()
+        self.refresh_move_list()
         self.refresh_status()
         self.redraw()
 
@@ -55,19 +82,150 @@ class ChessGUI:
         self.turn_var.set(f"Turn: {self.game.turn.capitalize()}")
         self.status_var.set(self.game.last_message if self.game.last_message else "Ready.")
 
+    def refresh_move_list(self):
+        self.moves_listbox.delete(0, tk.END)
+        for i, move in enumerate(self.game.move_list, start=1):
+            self.moves_listbox.insert(tk.END, f"{i}. {move}")
+        if self.game.move_list:
+            self.moves_listbox.see(tk.END)
+
+    def is_square_playable(self, square, piece_char):
+        # if game is over, nothing is playable
+        if self.game.game_over:
+            return False
+
+        # if promotion pending, only the promotion window is interactive
+        if self.game.promotion_pending is not None:
+            return False
+
+        # if no piece selected: you can click your own piece squares
+        if self.selected is None:
+            if piece_char == ".":
+                return False
+            if self.game.turn == "white":
+                return piece_char.isupper()
+            return piece_char.islower()
+
+        # if a piece is selected: you can click legal destination squares
+        if square in self.legal_squares:
+            return True
+
+        # allow clicking the selected square again (optional)
+        from_row, from_col = self.selected
+        selected_square = self.row_col_to_square(from_row, from_col)
+        return square == selected_square
+
+    def on_mouse_move(self, event):
+        x = event.x - self.margin
+        y = event.y - self.margin
+        col = x // self.square_size
+        row = y // self.square_size
+
+        # outside board
+        if not (0 <= row < 8 and 0 <= col < 8):
+            if self.hover_square is not None:
+                self.hover_square = None
+                self.canvas.config(cursor="arrow")
+                self.redraw()
+            return
+
+        square = self.row_col_to_square(row, col)
+        piece = self.game.board.grid[row][col]
+        playable = self.is_square_playable(square, piece)
+
+        # cursor: hand on playable squares
+        self.canvas.config(cursor="hand2" if playable else "arrow")
+
+        # hover highlight only if it changed
+        if self.hover_square != square:
+            self.hover_square = square
+            self.redraw()
+
+    def on_mouse_leave(self, _event):
+        self.hover_square = None
+        self.canvas.config(cursor="arrow")
+        self.redraw()
+
     def row_col_to_square(self, row, col):
         return chr(ord("a") + col) + str(8 - row)
 
+    def square_to_row_col(self, square):
+        col = ord(square[0]) - ord("a")
+        row = 8 - int(square[1])
+        return row, col
+
+    def pixel_to_square(self, x, y):
+        x -= self.margin
+        y -= self.margin
+        col = x // self.square_size
+        row = y // self.square_size
+        if not (0 <= row < 8 and 0 <= col < 8):
+            return None
+        return self.row_col_to_square(row, col)
+
+    def on_mouse_down(self, event):
+        square = self.pixel_to_square(event.x, event.y)
+        if not square:
+            return
+
+        row, col = self.square_to_row_col(square)
+        piece = self.game.board.grid[row][col]
+        if self.is_square_playable(square, piece):
+            self.canvas.config(cursor="fleur")  # pressed hand
+
+    def on_mouse_up(self, event):
+        square = self.pixel_to_square(event.x, event.y)
+        if not square:
+            self.canvas.config(cursor="arrow")
+            return
+
+        row, col = self.square_to_row_col(square)
+        piece = self.game.board.grid[row][col]
+        if self.is_square_playable(square, piece):
+            self.canvas.config(cursor="hand2")
+        else:
+            self.canvas.config(cursor="arrow")
+
     def ask_promotion(self):
+        # If it's already open, just focus it
+        if self.promo_window is not None and self.promo_window.winfo_exists():
+            self.promo_window.lift()
+            self.promo_window.focus_force()
+            return
+
         win = tk.Toplevel(self.root)
+        self.promo_window = win
         win.title("Promote pawn")
         win.grab_set()  # modal
+
+        win.protocol("WM_DELETE_WINDOW", lambda: None)  # disable X
+        win.transient(self.root)  # stays on top of main window
+
+        # Position near the promoted pawn square
+        square = self.game.promotion_pending  # like "e8"
+        if square:
+            col = ord(square[0]) - ord("a")
+            row = 8 - int(square[1])
+
+            # canvas absolute position on screen
+            canvas_x = self.canvas.winfo_rootx()
+            canvas_y = self.canvas.winfo_rooty()
+
+            # square top-left in screen coordinates
+            x = canvas_x + self.margin + col * self.square_size
+            y = canvas_y + self.margin + row * self.square_size
+
+            # open slightly to the right of the square (and aligned vertically)
+            win.geometry(f"+{x + self.square_size + 10}+{y}")
 
         tk.Label(win, text="Promote to:").pack(padx=10, pady=10)
 
         def choose(letter):
             self.game.promote(letter)
+            win.grab_release()
             win.destroy()
+            self.promo_window = None
+            self.refresh_move_list()
             self.refresh_status()
             self.redraw()
 
@@ -81,6 +239,10 @@ class ChessGUI:
         # If game over, still allow selecting nothing; just tell user.
         if self.game.game_over:
             self.status_var.set("Game over. Press New Game.")
+            return
+
+        if self.game.promotion_pending is not None:
+            self.ask_promotion()
             return
 
         x = event.x - self.margin
@@ -115,7 +277,9 @@ class ChessGUI:
         from_square = self.row_col_to_square(from_row, from_col)
         to_square = clicked_square
 
-        self.game.try_move(from_square, to_square)
+        moved = self.game.try_move(from_square, to_square)
+        if moved:
+            self.refresh_move_list()
 
         # if promotion pending, ask immediately
         if self.game.promotion_pending is not None:
@@ -169,6 +333,12 @@ class ChessGUI:
 
                 square = self.row_col_to_square(row, col)
 
+                # hover highlight on playable square
+                if self.hover_square == square:
+                    piece_here = self.game.board.grid[row][col]
+                    if self.is_square_playable(square, piece_here):
+                        fill = "#cfe8ff"  # light blue hover
+
                 if self.selected == (row, col):
                     fill = "#f7ec6e"
 
@@ -178,7 +348,7 @@ class ChessGUI:
                 if checked_king_square == square:
                     fill = "#f29b9b"
 
-                self.canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline="")
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline="", tags=("board",))
 
                 piece = self.game.board.grid[row][col]
                 symbol = UNICODE_PIECES.get(piece, "")
@@ -188,6 +358,7 @@ class ChessGUI:
                         (y1 + y2) // 2,
                         text=symbol,
                         font=("Arial", int(self.square_size * 0.55)),
+                        tags=("board",),
                     )
 
         # If game over, overlay a message

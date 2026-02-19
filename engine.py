@@ -428,6 +428,9 @@ class Game:
         self.result = None  # "checkmate" | "stalemate" | None
         self.promotion_pending = None  # e.g. "e8" or "a1"
         self.en_passant_target = None  # e.g. "e3" or "d6" (square that can be captured into)
+        self.move_list = []  # list of strings
+        self.pending_promo_text = None  # if a pawn reached last rank, store base move text until user chooses piece
+        self.last_move_text = ""  # last executed move text (e.g. e2→e4, O-O)
 
     def reset(self):
         self.board.reset()
@@ -437,6 +440,9 @@ class Game:
         self.result = None
         self.promotion_pending = None
         self.en_passant_target = None
+        self.move_list = []
+        self.pending_promo_text = None
+        self.last_move_text = ""
 
     def in_check_now(self, color):
         return king_in_check(self.board, color)
@@ -503,10 +509,11 @@ class Game:
             return
 
         # not game over
+        base = self.last_move_text or ""  # safety
         if in_check:
-            self.last_message = "Check!"
+            self.last_message = base + " (Check!)" if base else "Check!"
         else:
-            self.last_message = "Moved."
+            self.last_message = base if base else ""
 
     def promote(self, piece_letter):
         # piece_letter should be one of: "q","r","b","n" (case-insensitive)
@@ -531,10 +538,27 @@ class Game:
 
         self.promotion_pending = None
 
+        final_text = (self.pending_promo_text or "") + piece_letter.upper()
+        self.move_list.append(final_text)
+        self.last_move_text = final_text
+        self.pending_promo_text = None
+
         # now switch turn and evaluate check/mate/stalemate
         self.turn = "black" if self.turn == "white" else "white"
         self.update_end_state_for_side_to_move()
         return True
+
+    def _format_move_text(self, from_square, to_square, moving_piece, captured_piece, was_en_passant):
+        # Castling
+        from_row, from_col = self.board.square_to_index(from_square)
+        to_row, to_col = self.board.square_to_index(to_square)
+        if moving_piece.lower() == "k" and from_row == to_row and abs(to_col - from_col) == 2:
+            return "O-O" if to_col > from_col else "O-O-O"
+
+        # Capture?
+        is_capture = (captured_piece != ".") or was_en_passant
+        arrow = "×" if is_capture else "→"
+        return f"{from_square}{arrow}{to_square}"
 
     def try_move(self, from_square, to_square):
         if self.game_over:
@@ -550,16 +574,24 @@ class Game:
             self.last_message = reason
             return False
 
+        moving_piece = self.board.get_piece(from_square)
+        captured_piece = self.board.get_piece(to_square)  # normal capture is on destination
+
         # make move
         undo = self.board.make_move(from_square, to_square, self.en_passant_target, self.turn)
+
+        was_en_passant = bool(undo.get("en_passant"))
+        move_text = self._format_move_text(from_square, to_square, moving_piece, captured_piece, was_en_passant)
+        self.last_move_text = move_text
 
         moved_piece = self.board.get_piece(to_square)
 
         # --- NEW: promotion pending? ---
         if moved_piece.lower() == "p" and is_pawn_promotion_square(self.board, to_square, moved_piece):
             self.promotion_pending = to_square
-            self.last_message = "Choose promotion piece."
-            return True  # move happened, but turn not switched yet
+            self.pending_promo_text = move_text + "="  # we'll append Q/R/B/N later
+            self.last_message = f"{move_text} (promotion)"
+            return True
         # --------------------------------
 
         # Reset en passant by default (only lasts for one opponent move)
@@ -576,6 +608,8 @@ class Game:
             new_ep_target = jumped_square
 
         self.en_passant_target = new_ep_target
+
+        self.move_list.append(move_text)
 
         # normal flow
         self.turn = "black" if self.turn == "white" else "white"
