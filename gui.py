@@ -115,6 +115,31 @@ class ChessGUI:
         selected_square = self.row_col_to_square(from_row, from_col)
         return square == selected_square
 
+    def is_capture_destination(self, square):
+        # only relevant when a piece is selected and square is a legal destination
+        if self.selected is None:
+            return False
+        if square not in self.legal_squares:
+            return False
+
+        row, col = self.square_to_row_col(square)
+        target_piece = self.game.board.grid[row][col]
+
+        # normal capture: destination has a piece
+        if target_piece != ".":
+            return True
+
+        # en passant capture: destination is empty but equals EP target, and selected piece is a pawn moving diagonally
+        if self.game.en_passant_target == square:
+            from_row, from_col = self.selected
+            moving_piece = self.game.board.grid[from_row][from_col]
+            if moving_piece.lower() == "p":
+                direction = -1 if self.game.turn == "white" else 1
+                if (row - from_row) == direction and abs(col - from_col) == 1:
+                    return True
+
+        return False
+
     def on_mouse_move(self, event):
         x = event.x - self.margin
         y = event.y - self.margin
@@ -333,12 +358,6 @@ class ChessGUI:
 
                 square = self.row_col_to_square(row, col)
 
-                # hover highlight on playable square
-                if self.hover_square == square:
-                    piece_here = self.game.board.grid[row][col]
-                    if self.is_square_playable(square, piece_here):
-                        fill = "#cfe8ff"  # light blue hover
-
                 if self.selected == (row, col):
                     fill = "#f7ec6e"
 
@@ -347,6 +366,16 @@ class ChessGUI:
 
                 if checked_king_square == square:
                     fill = "#f29b9b"
+
+                # hover highlight on playable square
+                if self.hover_square == square:
+                    piece_here = self.game.board.grid[row][col]
+                    if self.is_square_playable(square, piece_here):
+                        # red hover if this square is a capturable destination
+                        if self.is_capture_destination(square):
+                            fill = "#ffb3b3"  # light red
+                        else:
+                            fill = "#cfe8ff"  # light blue
 
                 self.canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline="", tags=("board",))
 
