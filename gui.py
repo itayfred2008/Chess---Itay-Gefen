@@ -2,6 +2,21 @@
 import tkinter as tk
 from engine import Game
 
+
+def show_start_screen(root):
+    """Show start screen with Start Game button."""
+    start_frame = tk.Frame(root, padx=40, pady=40)
+    start_frame.pack(expand=True, fill="both")
+
+    tk.Label(start_frame, text="Chess MVP", font=("Arial", 28, "bold")).pack(pady=(0, 30))
+
+    def on_start_game():
+        start_frame.destroy()
+        ChessGUI(root)
+
+    tk.Button(start_frame, text="Start Game", font=("Arial", 16), command=on_start_game).pack(pady=10)
+
+
 UNICODE_PIECES = {
     "K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙",
     "k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟",
