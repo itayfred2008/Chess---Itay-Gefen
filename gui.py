@@ -1,14 +1,103 @@
 # gui.py
 import tkinter as tk
 from engine import Game
+from database import init_db, login, signup
 
 
-def show_start_screen(root):
+def show_login_screen(root):
+    """Show login screen (first page)."""
+    init_db()
+
+    login_frame = tk.Frame(root, padx=40, pady=40)
+    login_frame.pack(expand=True, fill="both")
+
+    tk.Label(login_frame, text="Chess MVP", font=("Arial", 28, "bold")).pack(pady=(0, 20))
+    tk.Label(login_frame, text="Login", font=("Arial", 16)).pack(pady=(0, 15))
+
+    tk.Label(login_frame, text="Username:").pack(anchor="w")
+    username_entry = tk.Entry(login_frame, width=25)
+    username_entry.pack(pady=(0, 10))
+
+    tk.Label(login_frame, text="Password:").pack(anchor="w")
+    password_entry = tk.Entry(login_frame, width=25, show="*")
+    password_entry.pack(pady=(0, 15))
+
+    error_var = tk.StringVar()
+    error_label = tk.Label(login_frame, textvariable=error_var, fg="red")
+    error_label.pack(pady=(0, 10))
+
+    def on_login():
+        success, msg = login(username_entry.get(), password_entry.get())
+        if success:
+            login_frame.destroy()
+            show_start_screen(root, msg)
+        else:
+            error_var.set(msg)
+
+    tk.Button(login_frame, text="Login", font=("Arial", 12), command=on_login).pack(pady=5)
+
+    def go_to_signup():
+        login_frame.destroy()
+        show_signup_screen(root)
+
+    tk.Button(login_frame, text="Don't have an account? Sign up", font=("Arial", 10), fg="blue",
+              cursor="hand2", command=go_to_signup).pack(pady=15)
+
+
+def show_signup_screen(root):
+    """Show signup screen."""
+    signup_frame = tk.Frame(root, padx=40, pady=40)
+    signup_frame.pack(expand=True, fill="both")
+
+    tk.Label(signup_frame, text="Chess MVP", font=("Arial", 28, "bold")).pack(pady=(0, 20))
+    tk.Label(signup_frame, text="Create Account", font=("Arial", 16)).pack(pady=(0, 15))
+
+    tk.Label(signup_frame, text="Username:").pack(anchor="w")
+    username_entry = tk.Entry(signup_frame, width=25)
+    username_entry.pack(pady=(0, 10))
+
+    tk.Label(signup_frame, text="Password:").pack(anchor="w")
+    password_entry = tk.Entry(signup_frame, width=25, show="*")
+    password_entry.pack(pady=(0, 10))
+
+    tk.Label(signup_frame, text="Confirm Password:").pack(anchor="w")
+    confirm_entry = tk.Entry(signup_frame, width=25, show="*")
+    confirm_entry.pack(pady=(0, 15))
+
+    error_var = tk.StringVar()
+    error_label = tk.Label(signup_frame, textvariable=error_var, fg="red")
+    error_label.pack(pady=(0, 10))
+
+    def on_signup():
+        username = username_entry.get()
+        password = password_entry.get()
+        confirm = confirm_entry.get()
+        if password != confirm:
+            error_var.set("Passwords do not match.")
+            return
+        success, msg = signup(username, password)
+        if success:
+            signup_frame.destroy()
+            show_start_screen(root, username.strip())
+        else:
+            error_var.set(msg)
+
+    tk.Button(signup_frame, text="Sign Up", font=("Arial", 12), command=on_signup).pack(pady=5)
+
+    def go_to_login():
+        signup_frame.destroy()
+        show_login_screen(root)
+
+    tk.Button(signup_frame, text="Already have an account? Login", font=("Arial", 10), fg="blue",
+              cursor="hand2", command=go_to_login).pack(pady=15)
+
+
+def show_start_screen(root, username: str):
     """Show start screen with Start Game button."""
     start_frame = tk.Frame(root, padx=40, pady=40)
     start_frame.pack(expand=True, fill="both")
 
-    tk.Label(start_frame, text="Chess MVP", font=("Arial", 28, "bold")).pack(pady=(0, 30))
+    tk.Label(start_frame, text=f"Hey {username}", font=("Arial", 28, "bold")).pack(pady=(0, 30))
 
     def on_start_game():
         start_frame.destroy()

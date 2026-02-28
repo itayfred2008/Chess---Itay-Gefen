@@ -1,12 +1,12 @@
 # main.py
 import tkinter as tk
-from gui import show_start_screen
+from gui import show_login_screen
 
 
 def main():
     root = tk.Tk()
     root.title("Chess MVP")
-    show_start_screen(root)
+    show_login_screen(root)
     root.mainloop()
 
 
