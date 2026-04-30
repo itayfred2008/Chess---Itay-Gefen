@@ -63,12 +63,22 @@ class NetworkClient:
 
     def close(self):
         self.alive = False
+
         try:
-            self.file.close()
+            if self.sock:
+                self.sock.shutdown(socket.SHUT_RDWR)
         except Exception:
             pass
+
         try:
-            self.sock.close()
+            if self.file:
+                self.file.close()
+        except Exception:
+            pass
+
+        try:
+            if self.sock:
+                self.sock.close()
         except Exception:
             pass
 
@@ -77,6 +87,9 @@ class ChessClientApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Chess Client")
+
+        self.closing = False
+        self.after_id = None
 
         self.net_queue = queue.Queue()
         self.client = NetworkClient(
@@ -108,7 +121,7 @@ class ChessClientApp:
 
         self.client.connect()
         self.show_login_screen()
-        self.root.after(100, self.process_network)
+        self.after_id = self.root.after(100, self.process_network)
 
         self.draw_offer_from = None
         self.rematch_votes = []
@@ -120,19 +133,30 @@ class ChessClientApp:
         self.main_frame.pack(expand=True, fill="both")
 
     def process_network(self):
+        if self.closing:
+            return
+
         while True:
             try:
                 msg = self.net_queue.get_nowait()
             except queue.Empty:
                 break
+
+            if self.closing:
+                return
+
             self.handle_server_message(msg)
 
-        self.root.after(100, self.process_network)
+        if not self.closing:
+            self.after_id = self.root.after(100, self.process_network)
 
     def handle_server_message(self, msg):
         msg_type = msg.get("type")
 
         if msg_type == "disconnected":
+            if self.closing:
+                return
+
             messagebox.showerror("Disconnected", "Lost connection to server.")
             self.root.destroy()
 
@@ -157,10 +181,14 @@ class ChessClientApp:
             self.rooms_cache = msg.get("rooms", [])
             self.refresh_room_listbox()
 
+
         elif msg_type == "room_joined":
             self.current_room_id = msg["room_id"]
             self.current_room_name = msg["room_name"]
             self.my_color = msg["your_color"]
+            self.both_connected = False
+            self.draw_offer_from = None
+            self.rematch_votes = []
             self.show_room_screen()
 
         elif msg_type == "opponent_left":
@@ -255,7 +283,9 @@ class ChessClientApp:
         for widget in self.action_frame.winfo_children():
             widget.pack_forget()
 
+        # Waiting for second player
         if not self.both_connected:
+            self.leave_room_btn.pack(side="left", padx=6)
             return
 
         # During active game
@@ -275,7 +305,6 @@ class ChessClientApp:
         self.vote_rematch_btn.pack(side="left", padx=6)
         self.leave_room_btn.pack(side="left", padx=6)
 
-    # ---------- AUTH UI ----------
 
     def show_login_screen(self):
         self.clear_main()
@@ -467,8 +496,6 @@ class ChessClientApp:
         top = tk.Frame(container)
         top.pack(fill="x")
 
-        tk.Button(top, text="Surrender", command=self.on_surrender_click).pack(side="left", padx=6, pady=6)
-
         self.room_info_var = tk.StringVar(value=f"Room: {self.current_room_name}")
         tk.Label(top, textvariable=self.room_info_var).pack(side="left", padx=10)
 
@@ -524,6 +551,7 @@ class ChessClientApp:
                                         command=lambda: self.client.send({"type": "leave_room"}))
         self.surrender_btn = tk.Button(self.action_frame, text="Surrender", command=self.on_surrender_click)
 
+        self.refresh_action_buttons()
         self.refresh_move_list()
         self.refresh_status()
         self.redraw()
@@ -545,6 +573,9 @@ class ChessClientApp:
         if self.server_game.move_list:
             self.moves_listbox.see(tk.END)
 
+    def is_board_flipped(self):
+        return self.my_color == "black"
+
     def row_col_to_square(self, row, col):
         return chr(ord("a") + col) + str(8 - row)
 
@@ -553,14 +584,28 @@ class ChessClientApp:
         row = 8 - int(square[1])
         return row, col
 
+    def board_to_display_row_col(self, row, col):
+        if self.is_board_flipped():
+            return 7 - row, 7 - col
+        return row, col
+
+    def display_to_board_row_col(self, row, col):
+        if self.is_board_flipped():
+            return 7 - row, 7 - col
+        return row, col
+
     def pixel_to_square(self, x, y):
         x -= self.margin
         y -= self.margin
-        col = x // self.square_size
-        row = y // self.square_size
-        if not (0 <= row < 8 and 0 <= col < 8):
+
+        display_col = x // self.square_size
+        display_row = y // self.square_size
+
+        if not (0 <= display_row < 8 and 0 <= display_col < 8):
             return None
-        return self.row_col_to_square(row, col)
+
+        board_row, board_col = self.display_to_board_row_col(display_row, display_col)
+        return self.row_col_to_square(board_row, board_col)
 
     def is_my_turn(self):
         return self.my_color == self.server_game.turn
@@ -616,19 +661,16 @@ class ChessClientApp:
         if not hasattr(self, "board_canvas"):
             return
 
-        x = event.x - self.margin
-        y = event.y - self.margin
-        col = x // self.square_size
-        row = y // self.square_size
+        square = self.pixel_to_square(event.x, event.y)
 
-        if not (0 <= row < 8 and 0 <= col < 8):
+        if square is None:
             if self.hover_square is not None:
                 self.hover_square = None
                 self.board_canvas.config(cursor="arrow")
                 self.redraw()
             return
 
-        square = self.row_col_to_square(row, col)
+        row, col = self.square_to_row_col(square)
         piece = self.server_game.board.grid[row][col]
         playable = self.is_square_playable(square, piece)
 
@@ -681,14 +723,14 @@ class ChessClientApp:
 
         square = self.server_game.promotion_pending
         if square and hasattr(self, "board_canvas"):
-            col = ord(square[0]) - ord("a")
-            row = 8 - int(square[1])
+            row, col = self.square_to_row_col(square)
+            display_row, display_col = self.board_to_display_row_col(row, col)
 
             canvas_x = self.board_canvas.winfo_rootx()
             canvas_y = self.board_canvas.winfo_rooty()
 
-            x = canvas_x + self.margin + col * self.square_size
-            y = canvas_y + self.margin + row * self.square_size
+            x = canvas_x + self.margin + display_col * self.square_size
+            y = canvas_y + self.margin + display_row * self.square_size
 
             win.geometry(f"+{x + self.square_size + 10}+{y}")
 
@@ -723,14 +765,11 @@ class ChessClientApp:
                 self.ask_promotion()
             return
 
-        x = event.x - self.margin
-        y = event.y - self.margin
-        col = x // self.square_size
-        row = y // self.square_size
-        if not (0 <= row < 8 and 0 <= col < 8):
+        clicked_square = self.pixel_to_square(event.x, event.y)
+        if not clicked_square:
             return
 
-        clicked_square = self.row_col_to_square(row, col)
+        row, col = self.square_to_row_col(clicked_square)
         clicked_piece = self.server_game.board.grid[row][col]
 
         if self.selected is None:
@@ -798,10 +837,11 @@ class ChessClientApp:
                 if checked_king_square:
                     break
 
-        for row in range(8):
-            for col in range(8):
-                x1 = self.margin + col * self.square_size
-                y1 = self.margin + row * self.square_size
+        for display_row in range(8):
+            for display_col in range(8):
+                row, col = self.display_to_board_row_col(display_row, display_col)
+                x1 = self.margin + display_col * self.square_size
+                y1 = self.margin + display_row * self.square_size
                 x2 = x1 + self.square_size
                 y2 = y1 + self.square_size
 
@@ -866,10 +906,19 @@ def main():
     app = ChessClientApp(root)
 
     def on_close():
+        app.closing = True
+
+        try:
+            if app.after_id is not None:
+                root.after_cancel(app.after_id)
+        except Exception:
+            pass
+
         try:
             app.client.close()
         except Exception:
             pass
+
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
