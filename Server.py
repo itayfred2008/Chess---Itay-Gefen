@@ -184,9 +184,6 @@ class ChessServer:
                 elif msg_type == "surrender":
                     self.handle_surrender(session)
 
-                elif msg_type == "new_game":
-                    self.handle_new_game(session)
-
                 elif msg_type == "offer_draw":
                     self.handle_offer_draw(session)
 
